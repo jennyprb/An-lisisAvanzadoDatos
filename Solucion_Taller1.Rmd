@@ -1,0 +1,158 @@
+---
+title: 'Análisis Avanzado de Datos: Taller 1'
+output:
+  html_document:
+    df_print: paged
+autor: Jenny Rivera
+---
+
+```{r}
+rm(list = ls())
+gc()
+
+####Instalación de paquetes####
+packages =c('glmnet', 'boot', 'caret')
+
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+}
+
+ipak(packages)
+
+rm(ipak)
+rm(packages)
+```
+
+```{r}
+dir_root <- "/Users/jennyriveraburgos/Desktop/Maestria MACC/Analisis Avanzado Datos/Taller 1"
+datos <- read.delim(file.path(dir_root, "taller1.txt"), header = TRUE, sep = ',')
+
+```
+
+# 1. ¿Hay multicolinealidad en los datos? Explique sucintamente.
+
+Sí, al tener 5.000 variables predictoras (independientes) y tan solo 1.200 observaciones, existirá dependencia lineal entre los vectores, donde algún vector puede ser expresado como una combinación lineal de otros, lo cual es equivalente a multicolinealidad.
+
+Adicionalmente, si no se utiliza algún método para corregir lo anterior, como por ejemplo, técnicas de selección, eliminación o reducción de variables o técnicas de regularización, la regresión obtenida tendrá problemas de bajo grado de libertad y, por tanto, de sobreajuste.
+
+# 2. Separe aleatoriamente (pero guarde la semilla) su conjunto de datos en dos partes:
+
+Entrenamiento: 1000 líneas celulares Prueba: 200 líneas celulares.
+
+```{r}
+# Guardar la semilla para asegurar reproducibilidad
+set.seed(123)
+
+# Separar aleatoriamente los datos en test y train
+sample_index <- sample(nrow(datos), 1000)
+train <- datos[sample_index, ]
+test <- datos[-sample_index, ]
+```
+
+# 3. Usando los 1000 datos de entrenamiento, determine los valores de λr y λl de regesión ridge y lasso, respectivamente, que minimicen el error cuadrático medio (ECM) mediante validación externa. Utilice el método de validación externa que considere más apropiado.
+
+Al ser la validación cruzada en k folds un método que combina la validación regular y la validación dejando un individuo por fuera, se minimizan la alta variabilidad y sesgo del ECM de la validación regular, y también se disminuye el esfuerzo computacional de la validación dejando un individuo por fuera.
+
+Se hace uso de la función createFolds de la librería caret para dividir aleatoriamente el conjunto de datos para la validación cruzada. También se utiliza cv.glmnet, una función de glmnet, para realizar validación cruzada en modelos de regresión lineal con regularización Lasso o Ridge.
+
+```{r}
+# Obtener matrices de variable dependiente e independiente
+X_train <- as.matrix(train[, -1])
+y_train <- train[, 1]
+
+# Definir rangos de λr y λl
+lambda_ridge <- 10^seq(10, -2, length.out = 100)
+lambda_lasso <- 10^seq(10, -2, length.out = 100)
+
+# Definir función de validación cruzada para ECM
+folds <- createFolds(y_train, k = 10, list = TRUE, returnTrain = FALSE)
+cv_ridge <- cv.glmnet(X_train, y_train, alpha = 0, lambda = lambda_ridge, nfolds = 10, folds = folds)
+cv_lasso <- cv.glmnet(X_train, y_train, alpha = 1, lambda = lambda_lasso, nfolds = 10, folds = folds)
+
+# Obtener valores óptimos de λr y λl
+lambda_opt_ridge <- cv_ridge$lambda.min
+lambda_opt_lasso <- cv_lasso$lambda.min
+
+# Imprimir valores óptimos de λr y λl
+cat("Valor óptimo de lambda_ridge:", lambda_opt_ridge, "\n")
+cat("Valor óptimo de lambda_lasso:", lambda_opt_lasso, "\n")
+```
+
+# 4. Ajuste la regresión ridge y lasso con los valores estimados de λr y λl obtenidos en (3) usando los 1000 datos de entrenamiento.
+
+```{r}
+modelo_ridge <- glmnet(X_train, y_train, alpha = 0, lambda = lambda_opt_ridge)
+modelo_lasso <- glmnet(X_train, y_train, alpha = 1, lambda = lambda_opt_lasso)
+
+```
+
+# 5. Para los modelos ajustados en (4) determine el más apropiado para propósitos de predicción. Considere únicamente el ECM en los 200 datos de prueba para su decisión.
+
+Para elegir el modelo más apropiado se utiliza el Error Cuadratico Medio (ECM). Dado que el ECM mide la diferencia entre los valores predichos y los valores reales de la variable dependiente, el modelo con un ECM más bajo será el elegido.
+
+```{r}
+# Crear matriz de predictores y vector de respuesta para datos de prueba
+X_test <- as.matrix(test[, -1])
+y_test <- test[, 1]
+
+# Predecir variable respuesta para datos de prueba
+y_pred_ridge <- predict(modelo_ridge, X_test)
+y_pred_lasso <- predict(modelo_lasso, X_test)
+
+# Calcular ECM para modelos en datos de prueba
+ecm_ridge <- mean((y_test - y_pred_ridge)^2)
+ecm_lasso <- mean((y_test - y_pred_lasso)^2)
+
+# Imprimir ECM para modelos en datos de prueba
+cat("ECM para modelo ridge:", ecm_ridge, "\n")
+cat("ECM para modelo lasso:", ecm_lasso, "\n")
+```
+
+```{r}
+
+if (ecm_ridge < ecm_lasso) {
+  modelo_seleccionado <- modelo_ridge
+  alpha_modelo <- 0
+} else {
+  modelo_seleccionado <- modelo_lasso 
+  alpha_modelo <- 1
+}
+```
+
+De acuerdo el ECM, el modelo escogido es el Lasso.
+
+# 6. Ajuste el modelo seleccionado en (5) para los 1200 datos. Note que en este punto ya tiene un λ estimado y un modelo seleccionado.
+
+```{r}
+X <- as.matrix(datos[, -1])
+y <- datos[, 1]
+
+modelo_ajustado <- glmnet(X, y, alpha=alpha_modelo, lambda=modelo_seleccionado$lambda)
+
+```
+
+# 7. Grafique las trazas de los coeficientes en función de la penalización para el modelo ajustado en (6)
+
+Los modelos de regresión Ridge y Lasso penalizan la suma de los coeficientes elevados al cuadrado y la suma del valor absolutos de los coeficientes de regresión, respectivamente. Lambda es el parámetro de penalización. Un valor grande de lambda aumenta la penalización y disminuye la magnitud de los coeficientes, lo que puede reducir el sobreajuste y mejorar la capacidad de generalización del modelo. En general, se busca un valor de lambda que mantenga los coeficientes más importantes y elimine los menos importantes.
+
+```{r}
+modelo_ajustado_graph <- glmnet(X, y, alpha=alpha_modelo, lambda=seq(0, 1, length=20))
+plot(modelo_ajustado_graph, xvar="lambda")
+```
+
+De la gráfica se evidencian dos tipos de variables. Aquellas que inician con un coeficiente cercano a 0 y por tanto, a medida que aumenta la penalización, este se acerca aún más a 0. El segundo tipo de variables inician con un coeficiente cerano a 1 y a medida que aumenta la penalización disminuyen acercandosé 0.
+
+# 8. En un párrafo resuma los resultados obtenidos dado el objetivo inicial del estudio.
+
+```{r}
+coeficientes <- coef(modelo_ajustado)
+numero_genes_seleccionados <- sum(modelo_ajustado$df)
+numero_genes_seleccionados
+```
+
+En casos donde existen muchas variables predictoras (como es común en estudios de genómica) una regresión lineal tradicional puede llevar al sobreajuste a los datos de entrenamiento y la no generalización del modelo. Para solucionar este problema, la regresón Ridge y Lasso agreguen una penalización a los coeficientes de las variables predictoras, excluyendo los coeficientes menos relevantes obteniendo así un modelo más parsimonioso y generalizable.
+
+Se utilizó una técnica de validación cruzada con k-folds para obtener el valor de lambda que minimiza el error cuadrático medio (ECM) de los modelos Ridge y Lasso. Luego, se utilizó el ECM nuevamente para determinar que la regresión Lasso tenía un mejor rendimiento en la predicción de la efectividad del tratamiento anticancer. Con la penalización, el modelo seleccionó un subconjunto de 96 genes de los 5000 considerados para la predicción. En relación con la gráfica de la trayectoria de los coeficientes, se observó que los coeficientes de algunos genes se mantuvieron constantes a medida que se aumentaba el valor de lambda, mientras que otros coeficientes se acercaron a cero. Esto indica que algunos genes tienen una mayor influencia en la predicción de la efectividad del tratamiento anticancer que otros.
